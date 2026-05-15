@@ -28,24 +28,28 @@ VIDEOS_PATH = os.path.join(DATA_PATH, "videos")
 # =========================================================
 def find_related_image(file_stem):
 
-    for image_file in os.listdir(IMAGES_PATH):
+    if os.path.exists(IMAGES_PATH):
 
-        if image_file.startswith(file_stem):
+        for image_file in os.listdir(IMAGES_PATH):
 
-            return f"/media/images/{image_file}"
+            if image_file.startswith(file_stem):
 
-    return None
+                return f"/media/images/{image_file}"
+
+    return ""
 
 
 def find_related_video(file_stem):
 
-    for video_file in os.listdir(VIDEOS_PATH):
+    if os.path.exists(VIDEOS_PATH):
 
-        if video_file.startswith(file_stem):
+        for video_file in os.listdir(VIDEOS_PATH):
 
-            return f"/media/videos/{video_file}"
+            if video_file.startswith(file_stem):
 
-    return None
+                return f"/media/videos/{video_file}"
+
+    return ""
 
 
 # =========================================================
@@ -105,9 +109,13 @@ def load_documents():
 
                                         "type": "text",
 
-                                        "image": image,
+                                        "image": image or "",
 
-                                        "video": video
+                                        "video": video or "",
+
+                                        "pdf": "",
+
+                                        "link": ""
                                     }
                                 )
                             )
@@ -167,12 +175,22 @@ def load_documents():
 
                                 image = item.get(
                                     "image",
-                                    None
+                                    ""
                                 )
 
                                 video = item.get(
                                     "video",
-                                    None
+                                    ""
+                                )
+
+                                pdf = item.get(
+                                    "pdf",
+                                    ""
+                                )
+
+                                link = item.get(
+                                    "link",
+                                    ""
                                 )
 
                                 text = f"""
@@ -191,12 +209,22 @@ Service: {service}
 
                                             metadata={
                                                 "category": category,
+
                                                 "pillar": pillar,
+
                                                 "service": service,
+
                                                 "source": source,
+
                                                 "type": "json",
-                                                "image": image,
-                                                "video": video
+
+                                                "image": image or "",
+
+                                                "video": video or "",
+
+                                                "pdf": pdf or "",
+
+                                                "link": link or ""
                                             }
                                         )
                                     )
@@ -234,8 +262,19 @@ Service: {service}
                                     page_content=text.strip(),
 
                                     metadata={
+
                                         "source": file_name,
-                                        "type": "pdf"
+
+                                        "type": "pdf",
+
+                                        "image": "",
+
+                                        "video": "",
+
+                                        "pdf":
+                                        f"/media/pdfs/{file_name}",
+
+                                        "link": ""
                                     }
                                 )
                             )
@@ -278,8 +317,18 @@ Service: {service}
                                     page_content=text,
 
                                     metadata={
+
                                         "source": file_name,
-                                        "type": "csv"
+
+                                        "type": "csv",
+
+                                        "image":"",
+
+                                        "video":"",
+
+                                        "pdf":"",
+
+                                        "link":""
                                     }
                                 )
                             )
