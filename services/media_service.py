@@ -207,7 +207,7 @@ def find_local_media(text):
 
         x["path"]
 
-        for x in image_scores[:8]
+        for x in image_scores[:20]
 
     ]
 
@@ -216,7 +216,7 @@ def find_local_media(text):
 
         x["path"]
 
-        for x in video_scores[:1]
+        for x in video_scores[:2]
 
     ]
 
@@ -329,6 +329,53 @@ def extract_media_assets(docs):
 
             flags=re.IGNORECASE
         )
+        # ==========================================
+        # Auto classify PDF URLs
+        # ==========================================
+
+        for url in detected_links:
+
+            lower=url.lower()
+
+
+            if any(
+
+                x in lower
+
+                for x in [
+
+                    ".jpg",
+                    ".jpeg",
+                    ".png",
+                    ".gif",
+                    ".webp"
+
+                ]
+
+            ):
+
+                detected_images.append(
+                    url
+                )
+
+
+            elif any(
+
+                x in lower
+
+                for x in [
+
+                    ".mp4",
+                    ".mov",
+                    ".webm"
+
+                ]
+
+            ):
+
+                detected_videos.append(
+                    url
+                )
 
 
         local_images,local_videos=(
@@ -507,12 +554,12 @@ def extract_media_assets(docs):
         "images":
         list(dict.fromkeys(
             images
-        ))[:8],
+        ))[:20],
 
         "videos":
         list(dict.fromkeys(
             videos
-        ))[:1],
+        ))[:2],
 
         "pdfs":
         list(dict.fromkeys(

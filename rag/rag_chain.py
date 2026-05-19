@@ -1,5 +1,7 @@
 from services.llm_service import generate_llm_response
 from services.media_service import extract_media_assets
+from guardrails.input_validator import validate_input
+
 
 from vector_db.pinecone_client import vector_store
 
@@ -12,7 +14,39 @@ import re
 async def get_rag_response(query: str):
 
     try:
+        # =====================================================
+        # Input Validation / Privacy Guardrails
+        # =====================================================
 
+        validation=validate_input(
+            query
+        )
+
+
+        if not validation["allowed"]:
+
+            return{
+
+                "answer":
+                validation["message"],
+
+                "images":[],
+
+                "videos":[],
+
+                "pdfs":[],
+
+                "links":[],
+
+                "cards":[],
+
+                "sources":[],
+
+                "metadata":{}
+            }
+
+
+        query=validation["text"]
         # =====================================================
         # Detect Board/Leadership Queries
         # =====================================================
@@ -26,7 +60,6 @@ async def get_rag_response(query: str):
             "director",
             "members",
             "team",
-            "ceo",
             "founder",
             "executive"
 
@@ -39,6 +72,16 @@ async def get_rag_response(query: str):
             for word in board_keywords
         )
 
+        is_ceo_query=(
+
+        "ceo" in query.lower()
+
+        or
+
+        "chief executive" in query.lower()
+
+    )
+
 
         # =====================================================
         # Dynamic Retrieval
@@ -46,7 +89,7 @@ async def get_rag_response(query: str):
 
         retrieval_k=15
 
-        if is_board_query:
+        if is_board_query and not is_ceo_query:
 
             retrieval_k=100
 
@@ -63,7 +106,7 @@ async def get_rag_response(query: str):
         # Force leadership retrieval
         # =====================================================
 
-        if is_board_query:
+        if is_board_query or is_ceo_query:
 
             leadership_queries=[
 
@@ -140,7 +183,7 @@ async def get_rag_response(query: str):
         # Extra Retrieval
         # =====================================================
 
-        if is_board_query:
+        if is_board_query or is_ceo_query:
 
             extra_docs=[]
 
@@ -149,8 +192,6 @@ async def get_rag_response(query: str):
                 "Board of Directors",
                 "leadership team",
                 "executive leadership",
-                "CEO",
-                "Founder",
                 "Managing Director",
                 "leadership Accion Labs",
                 "board members"
@@ -267,7 +308,7 @@ async def get_rag_response(query: str):
             # Dynamic Person Extraction
             # =================================================
 
-            if is_board_query:
+            if is_board_query or is_ceo_query:
 
                 name=metadata.get(
                     "title",
@@ -424,41 +465,40 @@ async def get_rag_response(query: str):
                             []
                         )
 
-                        cleaned_name=name.lower()
+                        cleaned_name=name.lower().strip()
 
-                        cleaned_name=cleaned_name.replace(
-                            " ",
-                            "_"
-                        )
+                        variants=[
+
+                            cleaned_name,
+
+                            cleaned_name.replace(
+                                " ",
+                                "_"
+                            ),
+
+                            cleaned_name.replace(
+                                " ",
+                                "-"
+                            )
+
+                        ]
 
 
                         for img in possible:
 
                             lower=img.lower()
 
-                            if (
+                            if any(
 
-                                cleaned_name in lower
+                                x in lower
 
-                                or
-
-                                cleaned_name.replace(
-                                    "_",
-                                    "-"
-                                ) in lower
-
-                                or
-
-                                name.split()[0].lower()
-                                in lower
+                                for x in variants
 
                             ):
 
                                 image=img
 
                                 break
-
-
                     director_cards.append({
 
                         "title":name,
@@ -472,6 +512,7 @@ async def get_rag_response(query: str):
                         "link":linkedin
 
                     })
+
 
 
         # =====================================================
@@ -497,13 +538,18 @@ Rules:
 - Never hallucinate
 - Never show image URLs
 - Never say "Not specified"
-- Never repeat Role Summary Experience labels
-- Make responses natural and conversational
-- For leadership use concise human descriptions
-Name
-Role
-Summary
-Experience
+- Never output:
+
+Name:
+Role:
+Summary:
+Experience:
+CEO Summary:
+
+- Write naturally
+- Make responses conversational
+- Do not use labels
+- Respond in paragraph format
 
 Context:
 
@@ -560,26 +606,116 @@ Question:
         query_lower=query.lower()
 
 
-        for img in media_assets.get(
-            "images",
-            []
-        ):
+        stop_words={
 
-            filename=img.split("/")[-1]
+            "who",
+            "what",
+            "show",
+            "tell",
+            "about",
+            "of",
+            "the",
+            "is",
+            "are",
+            "accion",
+            "labs"
 
-            cleaned=filename.lower()
+        }
 
-            cleaned=cleaned.replace(
+
+        query_words=[
+
+            x
+
+            for x in re.findall(
+                r'\w+',
+                query_lower
+            )
+
+            if (
+
+                len(x)>2
+
+                and
+
+                x not in stop_words
+
+            )
+
+        ]
+
+
+        # =====================================================
+        # Use director names + query for image matching
+        # =====================================================
+
+        people_words=[]
+
+        for card in director_cards:
+
+            title=card.get(
+                "title",
+                ""
+            ).lower()
+
+            title=title.replace(
                 "_",
                 " "
+            ).replace(
+                "-",
+                " "
+            )
+
+            people_words.extend(
+
+                [
+
+                    x
+
+                    for x in title.split()
+
+                    if len(x)>2
+
+                ]
+
+            )
+
+
+        search_words=list(
+
+            set(
+
+                query_words+
+
+                people_words
+
+            )
+
+        )
+
+
+        for img in media_assets.get(
+
+            "images",
+
+            []
+
+        ):
+
+            filename=img.split("/")[-1].lower()
+
+            filename=re.sub(
+                r'[^a-z0-9]',
+                ' ',
+                filename
             )
 
 
             if any(
 
-                word in cleaned
+                word in filename
 
-                for word in query_lower.split()
+                for word in search_words
 
             ):
 
@@ -593,15 +729,20 @@ Question:
             []
         ):
 
-            filename=vid.split("/")[-1]
+            filename=vid.split("/")[-1].lower()
 
-            cleaned=filename.lower()
+            filename=re.sub(
+                r'[^a-z0-9]',
+                ' ',
+                filename
+            )
+
 
             if any(
 
-                word in cleaned
+                word in filename
 
-                for word in query_lower.split()
+                for word in search_words
 
             ):
 
@@ -610,16 +751,29 @@ Question:
                 )
 
 
+        # =====================================================
+        # Strict link filtering
+        # =====================================================
+
         for link in media_assets.get(
             "links",
             []
         ):
 
+            lower=link.lower()
+
+            lower=re.sub(
+                r'[^a-z0-9:/._-]',
+                ' ',
+                lower
+            )
+
+
             if any(
 
-                word in link.lower()
+                word in lower
 
-                for word in query_lower.split()
+                for word in search_words
 
             ):
 
@@ -628,43 +782,267 @@ Question:
                 )
 
 
+                # auto classify image urls
+
+                if any(
+
+                    x in lower
+
+                    for x in [
+
+                        ".jpg",
+                        ".jpeg",
+                        ".png",
+                        ".gif",
+                        ".webp"
+
+                    ]
+
+                ):
+
+                    filtered_images.append(
+                        link
+                    )
+
+
+                # auto classify video urls
+
+                elif any(
+
+                    x in lower
+
+                    for x in [
+
+                        ".mp4",
+                        ".mov",
+                        ".webm",
+                        "youtube.com",
+                        "youtu.be"
+
+                    ]
+
+                ):
+
+                    filtered_videos.append(
+                        link
+                    )
+
+
         # =====================================================
         # NO INFO => NO MEDIA
         # =====================================================
 
-        if (
+        bad=[
 
-            "couldn't find" in answer.lower()
+            "couldn't find",
+            "not found",
+            "no information",
+            "not available",
+            "don't have enough information",
+            "unable to find",
+            "no relevant information",
+            "i don't know",
+            "information unavailable",
+            "sorry",
+            "unable to answer",
+            "no data",
+            "insufficient information"
 
-            or
+        ]
 
-            "no information" in answer.lower()
+
+        if any(
+
+            x in answer.lower()
+
+            for x in bad
 
         ):
 
             filtered_images=[]
-
             filtered_videos=[]
-
             filtered_links=[]
+            director_cards=[]
+
+            media_assets["sources"]=[]
+            media_assets["pdfs"]=[]
+
+        # =====================================================
+        # Remove duplicate media intelligently
+        # =====================================================
+
+        seen=set()
+
+        clean_images=[]
 
 
-        elif not filtered_images:
+        for img in filtered_images:
 
-            filtered_images=media_assets.get(
-                "images",
-                []
+            name=img.split("/")[-1]
+
+            name=name.lower()
+
+            name=re.sub(
+                r'[^a-z0-9]',
+                '',
+                name
             )
 
-            filtered_videos=media_assets.get(
-                "videos",
-                []
+
+            if name not in seen:
+
+                seen.add(
+                    name
+                )
+
+                clean_images.append(
+                    img
+                )
+
+
+        filtered_images=clean_images
+        # =====================================================
+        # Board fallback images
+        # =====================================================
+
+        if (
+
+            (is_board_query or is_ceo_query)
+
+            and
+
+            not filtered_images
+
+        ):
+
+            seen=set()
+
+            fallback=[]
+
+            for x in director_cards:
+
+                img=x.get(
+                    "image"
+                )
+
+                if not img:
+
+                    continue
+
+                key=img.split("/")[-1]
+
+                key=key.lower()
+
+                key=re.sub(
+                    r'[^a-z0-9]',
+                    '',
+                    key
+                )
+
+                if key not in seen:
+
+                    seen.add(
+                        key
+                    )
+
+                    fallback.append(
+                        img
+                    )
+
+            filtered_images=fallback
+
+        seen=set()
+
+        clean_videos=[]
+
+
+        for vid in filtered_videos:
+
+            name=vid.split("/")[-1]
+
+            name=name.lower()
+
+            name=re.sub(
+                r'[^a-z0-9]',
+                '',
+                name
             )
 
-            filtered_links=media_assets.get(
-                "links",
-                []
+
+            if name not in seen:
+
+                seen.add(
+                    name
+                )
+
+                clean_videos.append(
+                    vid
+                )
+
+
+        filtered_videos=clean_videos
+
+        seen=set()
+
+        clean_links=[]
+
+        for link in filtered_links:
+
+            name=link.split("/")[-1]
+
+            name=name.lower()
+
+            name=re.sub(
+                r'[^a-z0-9]',
+                '',
+                name
             )
+
+            if name not in seen:
+
+                seen.add(
+                    name
+                )
+
+                clean_links.append(
+                    link
+                )
+
+        filtered_links=clean_links
+
+
+        # =====================================================
+        # Board queries -> show all detected directors
+        # =====================================================
+
+        if is_board_query and not is_ceo_query:
+
+            director_cards=sorted(
+
+                director_cards,
+
+                key=lambda x:
+                x.get(
+                    "title",
+                    ""
+                )
+
+            )
+
+
+            director_cards=list(
+
+                {
+
+                    x["title"]:x
+
+                    for x in director_cards
+
+                }.values()
+
+            )
+
+
 
 
         # =====================================================
@@ -691,7 +1069,10 @@ Question:
 
             director_cards
 
-            if is_board_query
+            if (is_board_query
+            or
+            is_ceo_query)
+
 
             else
 
@@ -714,7 +1095,13 @@ Question:
 
                 "query":query,
 
-                "leadership":is_board_query
+                "leadership":
+
+                (
+                    is_board_query
+                    or
+                    is_ceo_query
+                )
 
             }
 

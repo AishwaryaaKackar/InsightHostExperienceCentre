@@ -63,7 +63,7 @@ const BrightSoftwareHost = () => {
             content: cleanResponseText(data.answer),
             images: data.images || [],
             videos: data.videos || [],
-            links: []
+            links: data.links || []
           };
           setChat(prev => [...prev, botMessage]);
           speak(botMessage.content);
@@ -274,7 +274,7 @@ const BrightSoftwareHost = () => {
         const botMessage = {
           role: "assistant",
           content: cleanResponseText(data.answer || ""),
-          images: data.images || [], videos: data.videos || [], links: []
+          images: data.images || [], videos: data.videos || [], links: data.links || []
         };
         setChat(prev => [...prev, botMessage]);
         if (botMessage.content) speak(botMessage.content);
@@ -519,10 +519,31 @@ const BrightSoftwareHost = () => {
                       </div>
                     );
                   })}
+                  {msg.links?.map((link,idx)=>(
+
+                  <a
+                  key={idx}
+                  href={link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color:"#4DA6FF",
+                    fontSize:"12px",
+                    wordBreak:"break-word",
+                    marginBottom:"8px"
+                  }}
+                  >
+
+                  {link}
+
+                  </a>
+
+                  ))}
                 </div>
               </div>
             </div>
           ))}
+
           {interimText && <div className="bubble user-bubble" style={{ opacity: 0.5 }}>{interimText}</div>}
           <div ref={chatEndRef} />
         </div>
