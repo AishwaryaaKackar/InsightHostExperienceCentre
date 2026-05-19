@@ -9,7 +9,7 @@ const BrightSoftwareHost = () => {
 
   const stopFlagRef = useRef(false);
   const recognitionRef = useRef(null);
-  const isActiveRef = useRef(false);
+  const isActiveRef = useRef(true); 
   const isConversingRef = useRef(false);
   const isAISpeakingRef = useRef(false);
   const mediaActiveRef = useRef(false); 
@@ -17,7 +17,6 @@ const BrightSoftwareHost = () => {
   const videoRef = useRef(null); 
 
   const isMutedBySystemRef = useRef(false);
-  // NEW: Keeps track of the exact millisecond the AI stopped talking
   const lastSpeechEndTimeRef = useRef(0);
 
   const synthRef = window.speechSynthesis || {
@@ -101,7 +100,7 @@ const BrightSoftwareHost = () => {
     stopFlagRef.current = true;
     isAISpeakingRef.current = false;
     isMutedBySystemRef.current = false;
-    lastSpeechEndTimeRef.current = Date.now(); // Mark stop time to enforce cooldown
+    lastSpeechEndTimeRef.current = Date.now();
 
     window.speechSynthesis.cancel();
     
@@ -129,9 +128,14 @@ const BrightSoftwareHost = () => {
     }
   };
 
-  const toggleMediaMic = (isActive) => {
+  const toggleMediaMic = (isActive, videoElement = null) => {
     mediaActiveRef.current = isActive;
     setMediaActive(isActive);
+    
+    if (videoElement) {
+      videoRef.current = videoElement;
+    }
+
     if (isActive) {
       setStatus('VIDEO PLAYING (Listening for STOP)');
       setTimeout(safeStart, 100); 
@@ -141,7 +145,6 @@ const BrightSoftwareHost = () => {
     }
   };
 
-  // SPEECH RECOGNITION WITH ENHANCED TIMESTAMP COOLDOWN FILTER
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition || !isWaked) return;
@@ -161,7 +164,30 @@ const BrightSoftwareHost = () => {
       const lowerFinal = final.toLowerCase().trim();
       const lowerInterim = interim.toLowerCase().trim();
 
-      // 1. Emergency stop commands bypass all filters entirely
+      if (lowerFinal.includes("stop listening") || lowerInterim.includes("stop listening")) {
+        console.log("💤 STANDBY MODE ENGAGED (HISTORY PRESERVED)");
+        
+        stopFlagRef.current = true;
+        isAISpeakingRef.current = false;
+        isMutedBySystemRef.current = false;
+        window.speechSynthesis.cancel();
+        if (videoRef.current) videoRef.current.pause();
+        mediaActiveRef.current = false;
+        setMediaActive(false);
+
+        isConversingRef.current = false;
+        setStatus('STANDBY (Say Namaste)');
+        setInterimText('');
+
+        speak("If you want to wake me up say namaste");
+
+        setTimeout(() => {
+          stopFlagRef.current = false;
+          safeStart();
+        }, 400);
+        return;
+      }
+
       if (
         lowerFinal.includes("stop") || lowerFinal.includes("pause") ||
         lowerInterim.includes("stop") || lowerInterim.includes("pause")
@@ -170,8 +196,6 @@ const BrightSoftwareHost = () => {
         return;
       }
 
-      // 2. HARD COOLDOWN FILTER: If the AI is actively speaking, OR if it has 
-      // stopped speaking less than 800ms ago, drop the text to prevent echo leak.
       const timeSinceSpeechEnded = Date.now() - lastSpeechEndTimeRef.current;
       if (isMutedBySystemRef.current || isAISpeakingRef.current || timeSinceSpeechEnded < 800) {
         return; 
@@ -185,7 +209,7 @@ const BrightSoftwareHost = () => {
       if (mediaActiveRef.current) return; 
 
       if (!isConversingRef.current) {
-        if (lowerFinal.includes("namaste")) {
+        if (lowerFinal.includes("namaste") || lowerInterim.includes("namaste")) {
           isConversingRef.current = true;
           setStatus('LISTENING');
           const welcomeMessage = {
@@ -214,7 +238,6 @@ const BrightSoftwareHost = () => {
     safeStart();
 
     return () => { 
-      isActiveRef.current = false; 
       if (recognitionRef.current) recognitionRef.current.stop(); 
     };
   }, [isWaked]);
@@ -278,7 +301,7 @@ const BrightSoftwareHost = () => {
       if (stopFlagRef.current || index >= chunks.length) {
         isAISpeakingRef.current = false;
         isMutedBySystemRef.current = false;
-        lastSpeechEndTimeRef.current = Date.now(); // Set cooldown marker when all text ends
+        lastSpeechEndTimeRef.current = Date.now();
         if (!stopFlagRef.current && isActiveRef.current) {
           setStatus(isConversingRef.current ? 'LISTENING' : 'STANDBY (Say Namaste)');
         }
@@ -295,7 +318,7 @@ const BrightSoftwareHost = () => {
 
       utterance.onend = () => {
         isMutedBySystemRef.current = false; 
-        lastSpeechEndTimeRef.current = Date.now(); // Update cooldown marker between individual chunks
+        lastSpeechEndTimeRef.current = Date.now();
         
         if (!stopFlagRef.current) {
           index++;
@@ -420,58 +443,78 @@ const BrightSoftwareHost = () => {
               <div style={(msg.images?.length || msg.videos?.length) ? { display: "flex", gap: "18px" } : {}}>
                 <div style={{ flex: 1 }}>{msg.content}</div>
                 <div style={{ width: "260px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {msg.images?.map((img, idx) => (
-                    <img key={idx} src={img.url} alt="Insight" style={{ width: "100%", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.1)" }} />
-                  ))}
-                  {msg.videos?.map((vid, idx) => {
-                  let videoUrl = vid.url || vid; // Handles if vid is an object or a direct string
-                  
-                  if (videoUrl && !videoUrl.startsWith('http')) {
-                    // 1. Normalize any backslashes from Windows servers
-                    let cleanPath = videoUrl.replace(/\\/g, '/');
-                    
-                    // 2. If the backend ALREADY included the leading "/media" or "media", strip it out
-                    // so we can build a standardized, clean absolute URL
-                    cleanPath = cleanPath.replace(/^\/?media\//i, '');
+                  {msg.images?.map((img, idx) => {
+                    let imageUrl = img.url || img; 
+                    if (!imageUrl) return null;
 
-                    // 3. Strip out any accidental leftover root folder configurations
-                    cleanPath = cleanPath.replace(/^(knowledge_base\/|knowledgebase\/|knowledge_base-|knowledgebase-)/i, '');
+                    // Unified local asset router bypass logic
+                    const isFrontendAsset = imageUrl.startsWith('assets/') || imageUrl.startsWith('/assets/');
 
-                    // 4. Ensure our dynamic target folder structure is matched correctly
-                    if (cleanPath.startsWith('videos-')) {
-                      cleanPath = cleanPath.replace('videos-', 'videos/');
-                    }
-                    if (!cleanPath.startsWith('videos/')) {
-                      cleanPath = `videos/${cleanPath}`;
+                    if (!imageUrl.startsWith('http') && !isFrontendAsset) {
+                      let cleanImgPath = imageUrl.replace(/\\/g, '/');
+                      cleanImgPath = cleanImgPath.replace(/^\/?media\//i, '');
+                      cleanImgPath = cleanImgPath.replace(/^(knowledge_base\/|knowledgebase\/)/i, '');
+
+                      if (!cleanImgPath.startsWith('images/') && !cleanImgPath.startsWith('assets/')) {
+                        cleanImgPath = `images/${cleanImgPath}`;
+                      }
+
+                      cleanImgPath = cleanImgPath.split('/').map(seg => encodeURIComponent(seg)).join('/');
+                      imageUrl = `http://localhost:8000/media/${cleanImgPath}`;
                     }
 
-                    // 5. CRITICAL: URL Encode spaces and special characters (e.g., "Innovation summit 2026.mp4" -> "Innovation%20summit%202026.mp4")
-                    // We split by '/' so we don't accidentally encode the directory slashes themselves
-                    cleanPath = cleanPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
-
-                    // 6. Build the definitive absolute address
-                    videoUrl = `http://localhost:8000/media/${cleanPath}`;
-                  }
-
-                  console.log("🎬 Sanity Check - Requesting Video From Address:", videoUrl);
-
-                  return (
-                    <div key={idx} style={{ width: '100%', marginBottom: '10px' }}>
-                      <video 
-                        src={videoUrl}
-                        controls 
-                        autoPlay 
-                        playsInline
-                        preload="metadata"
-                        style={{ width: '100%', borderRadius: '10px', backgroundColor: '#000', display: 'block' }} 
-                        onPlay={(e) => toggleMediaMic(true, e.target)} 
-                        onPause={() => toggleMediaMic(false)} 
-                        onEnded={() => toggleMediaMic(false)}
+                    return (
+                      <img 
+                        key={idx} 
+                        src={imageUrl} 
+                        alt="Insight View Asset" 
+                        style={{ 
+                          width: "100%", 
+                          borderRadius: "12px", 
+                          border: "1px solid rgba(255,255,255,0.1)", 
+                          display: "block",
+                          backgroundColor: "rgba(255,255,255,0.02)",
+                          marginBottom: "8px"
+                        }} 
                         onError={(e) => {
-                          console.error("❌ Failed Video Stream Target Location:", videoUrl);
-                          console.error("Browser HTML5 Error Code:", e.target.error?.code);
-                          console.error("Browser HTML5 Error Message:", e.target.error?.message);
+                          console.error("❌ Failed to resolve image resource pipeline at:", imageUrl);
                         }}
+                      />
+                    );
+                  })}
+                  {msg.videos?.map((vid, idx) => {
+                    let videoUrl = vid.url || vid;
+                    if (videoUrl && !videoUrl.startsWith('http')) {
+                      let cleanPath = videoUrl.replace(/\\/g, '/');
+                      cleanPath = cleanPath.replace(/^\/?media\//i, '');
+                      cleanPath = cleanPath.replace(/^(knowledge_base\/|knowledgebase\/|knowledge_base-|knowledgebase-)/i, '');
+
+                      if (cleanPath.startsWith('videos-')) {
+                        cleanPath = cleanPath.replace('videos-', 'videos/');
+                      }
+                      if (!cleanPath.startsWith('videos/')) {
+                        cleanPath = `videos/${cleanPath}`;
+                      }
+
+                      cleanPath = cleanPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                      videoUrl = `http://localhost:8000/media/${cleanPath}`;
+                    }
+
+                    return (
+                      <div key={idx} style={{ width: '100%', marginBottom: '10px' }}>
+                        <video 
+                          src={videoUrl}
+                          controls 
+                          autoPlay 
+                          playsInline
+                          preload="metadata"
+                          style={{ width: '100%', borderRadius: '10px', backgroundColor: '#000', display: 'block' }} 
+                          onPlay={(e) => toggleMediaMic(true, e.target)} 
+                          onPause={() => toggleMediaMic(false)} 
+                          onEnded={() => toggleMediaMic(false)}
+                          onError={(e) => {
+                            console.error("❌ Failed Video Stream Target Location:", videoUrl);
+                          }}
                         />
                       </div>
                     );
